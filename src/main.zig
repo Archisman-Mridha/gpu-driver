@@ -91,7 +91,7 @@ const Opcodes = struct {
 //
 // The registry in Wayland is a special (non global) object provided by the compositor to clients
 // upon connection. It acts like a directory service for all the global objects available. The
-// client can get the registry by invoking wl_display::wl_registry( ).
+// client can get the registry by invoking wl_display::get_registry( ).
 
 const ObjectIDs = struct {
     const WAYLAND_DISPLAY = 1;
@@ -111,7 +111,21 @@ const WaylandIDAllocator = struct {
 // This request creates a registry object that allows the client to list and bind the global
 // objects available from the compositor.
 //
-// NOTE : The server side resources consumed in response to a get_registry request can only be
+// When a client creates a registry object, the registry object will emit a global event for each
+// global currently in the registry. To mark the end of the initial burst of events, the client can
+// use the wl_display.sync( ) request immediately after calling wl_display.get_registry( ).
+//
+// Globals come and go as a result of device or monitor hotplugs, reconfiguration or other events,
+// and the registry will send out global and global_remove events to keep the client up to date
+// with the changes.
+//
+// The error event is sent out when a fatal (non-recoverable) error has occurred. The object_id
+// argument is the object where the error occurred, most often in response to a request to that
+// object. The code identifies the error and is defined by the object interface. As such, each
+// interface defines its own set of error codes. The message is a brief description of the error,
+// for (debugging) convenience.
+//
+// NOTE : The server side resources consumed in events to a get_registry request can only be
 // released when the client disconnects, not when the client side proxy is destroyed. Therefore,
 // clients should invoke get_registry as infrequently as possible to avoid wasting memory.
 fn getRegistryObject(socket: std.posix.socket_t, newId: u32) !void {
@@ -132,7 +146,50 @@ fn getRegistryObject(socket: std.posix.socket_t, newId: u32) !void {
 
     const bytesWritten = try std.posix.write(socket, std.mem.asBytes(&message));
     std.debug.assert(bytesWritten == @sizeOf(GetRegistryMessage));
+
+    // Initial burst of global events (which is specific to the client only).
+
+    var eventsAsBytes: [4096]u8 = undefined; // event emitted for each global.
+    const bytesRead = try std.posix.read(socket, &eventsAsBytes);
+
+    var eventIterator = EventIterator{ .buffer = eventsAsBytes[0..bytesRead] };
+    while (eventIterator.next()) |event| {
+        std.debug.print("{any}\n", .{event});
+    }
 }
+
+const EventIterator = struct {
+    buffer: []const u8,
+
+    const Event = struct {
+        header: MessageHeader,
+        data: []const u8,
+    };
+
+    fn next(self: *EventIterator) ?Event {
+        if (self.buffer.len < @sizeOf(MessageHeader)) {
+            return null;
+        }
+
+        const headerAsBytes = self.buffer[0..@sizeOf(MessageHeader)];
+        const header = std.mem.bytesAsValue(MessageHeader, headerAsBytes);
+
+        // CASE : We haven't received the complete message.
+        if (self.buffer.len < header.messageSize) {
+            return null;
+        }
+
+        const data = self.buffer[@sizeOf(MessageHeader)..header.messageSize];
+
+        // Consume the bytes read, from the buffer.
+        self.buffer = self.buffer[header.messageSize..];
+
+        return Event{
+            .header = header.*,
+            .data = data,
+        };
+    }
+};
 
 pub fn main() !void {
     var generalPurposeAllocator = std.heap.GeneralPurposeAllocator(.{}){};

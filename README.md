@@ -19,3 +19,7 @@
 - [Does Zig automatically try to do as much at compile as it possibly can?](https://www.reddit.com/r/Zig/comments/18ok5iv/does_zig_automatically_try_to_do_as_much_at/)
 
 - [What is Endianness? Big-Endian & Little-Endian](https://www.geeksforgeeks.org/little-and-big-endian-mystery/)
+
+## Zig techniques
+
+- [ ] Conversion between arrays and slices. Meaning of `const arrays` and `const slices`.
